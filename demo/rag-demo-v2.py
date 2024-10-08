@@ -57,10 +57,11 @@ class Custom_Query_Engine():
     def get_rag_toggle(self):
         return self.use_rag
 
-    def reload(self, path):
+    def reload(self, path, other_docs):
         del self.query_engine
         del self.index
         self.documents = SimpleDirectoryReader(RAG_UPLOAD_FOLDER).load_data()
+        self.documents += other_docs
         self.index = VectorStoreIndex.from_documents(self.documents, show_progress=True)
         self.query_engine = self.index.as_query_engine(streaming=True, similarity_top_k=3)
 
@@ -155,7 +156,7 @@ def stream_response(message, history):
             res = str(res) + str(token.delta)
             yield res
 
-def vectorize(files, progress=gr.Progress()):
+def vectorize(content, progress=gr.Progress()):
     Path(RAG_UPLOAD_FOLDER).mkdir(parents=True, exist_ok=True)
     UPLOAD_FOLDER = RAG_UPLOAD_FOLDER
 
@@ -163,14 +164,23 @@ def vectorize(files, progress=gr.Progress()):
     for f in prev_files:
         os.remove(f)
 
-    if not files:
+    urls = content[0]
+    files = content[1]
+
+    if not files and not urls:
         return []
     
-    file_paths = [file.name for file in files]
-    for file in files:
-        shutil.copy(file.name, UPLOAD_FOLDER)
+    documents = []
 
-    query_engine.reload(UPLOAD_FOLDER)
+    if urls:
+        documents += BeautifulSoupWebReader().load_data(urls)
+
+    if files:
+        file_paths = [file.name for file in files]
+        for file in files:
+            shutil.copy(file.name, UPLOAD_FOLDER)
+
+    query_engine.reload(UPLOAD_FOLDER, documents)
     
     return file_paths
 
@@ -187,17 +197,18 @@ with gr.Blocks(css=css) as demo:
     # """)
     gr.Markdown(
     """
-    <h1 style="text-align: center;">Retrieval Augmented Generation Chatbot 💻📑✨</h3>
+    <h1 style="text-align: center;">Project Melius Retrieval Augmented Generation Chatbot 💻📑✨</h3>
     """)
     with gr.Row(equal_height=True, elem_classes=["app-interface"]):
         with gr.Column(scale=4, elem_classes=["chat-interface"]):
             test = gr.ChatInterface(fn=stream_response)
         with gr.Column(scale=1):
+            url_input = gr.Textbox(label="Reference File URL", lines="2")
             file_input = gr.File(elem_classes=["file-interface"], file_types=["pdf", "csv", "text", "html"], file_count="multiple")
             # upload_button = gr.UploadButton("Click to Upload a File", file_types=["image", "video", "pdf", "csv", "text"], file_count="multiple")
             # upload_button.upload(upload_file, upload_button, file_input)
             vectorize_button = gr.Button("Vectorize Files")
-            vectorize_button.click(fn=vectorize, inputs=file_input, outputs=file_input)
+            vectorize_button.click(fn=vectorize, inputs=[url_input, file_input], outputs=file_input)
             use_rag = gr.Checkbox(label="Use Knowledge Base")
             use_rag.select(fn=toggle_knowledge_base, inputs=use_rag)
             
