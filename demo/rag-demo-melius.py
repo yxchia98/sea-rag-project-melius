@@ -57,11 +57,10 @@ class Custom_Query_Engine():
     def get_rag_toggle(self):
         return self.use_rag
 
-    def reload(self, path, other_docs):
+    def reload(self, path):
         del self.query_engine
         del self.index
         self.documents = SimpleDirectoryReader(RAG_UPLOAD_FOLDER).load_data()
-        self.documents += other_docs
         self.index = VectorStoreIndex.from_documents(self.documents, show_progress=True)
         self.query_engine = self.index.as_query_engine(streaming=True, similarity_top_k=3)
 
@@ -153,7 +152,7 @@ def vectorize(files, progress=gr.Progress()):
 def toggle_knowledge_base(use_rag):
     print(f"toggling use knowledge base to {use_rag}")
     query_engine.toggle_rag(use_rag)
-    return use_rag
+    return
 
 
 with gr.Blocks(css=css) as demo:
@@ -165,10 +164,9 @@ with gr.Blocks(css=css) as demo:
         with gr.Column(scale=4, elem_classes=["chat-interface"]):
             test = gr.ChatInterface(fn=stream_response)
         with gr.Column(scale=1):
-            # url_input = gr.Textbox(label="Reference File URL", lines="2")
-            file_input = gr.File(elem_classes=["file-interface"], file_types=["pdf", "csv", "text", "html"], file_count="multiple")
-            # upload_button = gr.UploadButton("Click to Upload a File", file_types=["image", "video", "pdf", "csv", "text"], file_count="multiple")
-            # upload_button.upload(upload_file, upload_button, file_input)
+            url_input = gr.Textbox(label="Reference File URL", lines=1)
+            # file_input = gr.File(elem_classes=["file-interface"], file_types=["pdf", "csv", "text", "html"], file_count="multiple")
+            file_input = gr.File(elem_classes=["file-interface"], file_types=["file"], file_count="multiple")
             vectorize_button = gr.Button("Vectorize Files")
             vectorize_button.click(fn=vectorize, inputs=file_input, outputs=file_input)
             use_rag = gr.Checkbox(label="Use Knowledge Base")
