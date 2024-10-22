@@ -27,12 +27,13 @@ class Custom_Query_Engine():
         - Generate human readable output, avoid creating output with gibberish text.
         - Don't include any other language before or after the requested output.
         - Make use of the additional context given to provide better answers.
+        - Elaborate on your responses based on the context given.
         """
         
         self.llm = Ollama(
             model=f"{os.environ['LLM_MODEL_NAME']}", 
             base_url=f"{os.environ['LLM_MODEL_ENDPOINT']}",
-            request_timeout=120.0
+            request_timeout=360.0
             )
 
         # self.embed_model = IpexLLMEmbedding(model_name="/llm-models/hf-models/bge-small-en-v1.5", trust_remote_code=True)
@@ -44,10 +45,8 @@ class Custom_Query_Engine():
             
         Settings.llm = self.llm
         Settings.embed_model = self.embed_model
-
-        self.documents = SimpleDirectoryReader("./data/").load_data()
-        self.index = VectorStoreIndex.from_documents(self.documents, show_progress=True)
-        self.query_engine = self.index.as_query_engine(streaming=True, similarity_top_k=3)
+        
+        Path(RAG_UPLOAD_FOLDER).mkdir(parents=True, exist_ok=True)
         self.use_rag = False
 
     def toggle_rag(self, toggle):
@@ -57,43 +56,50 @@ class Custom_Query_Engine():
     def get_rag_toggle(self):
         return self.use_rag
 
-    def reload(self, path):
-        del self.query_engine
-        del self.index
-        self.documents = SimpleDirectoryReader(RAG_UPLOAD_FOLDER).load_data()
-        self.index = VectorStoreIndex.from_documents(self.documents, show_progress=True)
-        self.query_engine = self.index.as_query_engine(streaming=True, similarity_top_k=3)
-
     def query(self, message):
         return self.query_engine.query(message)
 
     def query_without_rag(self, message):
-        # self.query_engine = self.llm.as_query_engine(streaming=True)
         return self.llm.stream_complete(message)
-        # return self.query_engine.query(message)
 
-    def completion_to_prompt(self, completion):
-        # print(f"<|im_start|>system\n{self.SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n{completion}<|im_end|>\n<|im_start|>assistant\n")
-        return f"<|im_start|>system\n{self.SYSTEM_PROMPT}<|im_end|>\n<|im_start|>user\n{completion}<|im_end|>\n<|im_start|>assistant\n"
+    def reload_scraped(self, documents):
 
-    def messages_to_prompt(self, messages):
-        prompt = ""
-        for message in messages:
-            if message.role == "system":
-                prompt += f"<|im_start|>system\n{message.content}<|im_end|>\n"
-            elif message.role == "user":
-                prompt += f"<|im_start|>user\n{message.content}<|im_end|>\n"
-            elif message.role == "assistant":
-                prompt += f"<|im_start|>assistant\n{message.content}<|im_end|>\n"
+        try:
+            del self.query_engine
+        except:
+            print("instantiating new query engine")
+        else:
+            print("re-creating query engine")
 
-        if not prompt.startswith("<|im_start|>system"):
-            prompt = "<|im_start|>system\n" + prompt
+        try:
+            del self.index
+        except:
+            print("instantiating new index")
+        else:
+            print("re-creating index")
+            
+        self.index = VectorStoreIndex.from_documents(documents, show_progress=True)
+        self.query_engine = self.index.as_query_engine(streaming=True, similarity_top_k=3)
 
-        prompt = prompt + "<|im_start|>assistant\n"
+    def reload_uploaded(self, path):
 
-        # print(prompt)
+        try:
+            del self.query_engine
+        except:
+            print("instantiating new query engine")
+        else:
+            print("re-creating query engine")
 
-        return prompt
+        try:
+            del self.index
+        except:
+            print("instantiating new index")
+        else:
+            print("re-creating index")
+            
+        self.documents = SimpleDirectoryReader(RAG_UPLOAD_FOLDER).load_data()
+        self.index = VectorStoreIndex.from_documents(self.documents, show_progress=True)
+        self.query_engine = self.index.as_query_engine(streaming=True, similarity_top_k=3)
 
 
 css = """
@@ -130,7 +136,25 @@ def stream_response(message, history):
             res = str(res) + str(token.delta)
             yield res
 
-def vectorize(files, progress=gr.Progress()):
+def vectorize_scrape(url, progress=gr.Progress()):
+    Path(RAG_UPLOAD_FOLDER).mkdir(parents=True, exist_ok=True)
+    UPLOAD_FOLDER = RAG_UPLOAD_FOLDER
+
+    prev_files = glob.glob(f"{UPLOAD_FOLDER}*")
+    for f in prev_files:
+        os.remove(f)
+
+    if not url:
+        return []
+    
+    documents = SimpleWebPageReader(html_to_text=True).load_data([url])
+
+
+    query_engine.reload_scraped(documents)
+    
+    return url
+
+def vectorize_uploads(files, progress=gr.Progress()):
     Path(RAG_UPLOAD_FOLDER).mkdir(parents=True, exist_ok=True)
     UPLOAD_FOLDER = RAG_UPLOAD_FOLDER
 
@@ -142,10 +166,11 @@ def vectorize(files, progress=gr.Progress()):
         return []
     
     file_paths = [file.name for file in files]
+
     for file in files:
         shutil.copy(file.name, UPLOAD_FOLDER)
 
-    query_engine.reload(UPLOAD_FOLDER)
+    query_engine.reload_uploaded(UPLOAD_FOLDER)
     
     return file_paths
 
@@ -165,18 +190,16 @@ with gr.Blocks(css=css) as demo:
             test = gr.ChatInterface(fn=stream_response)
         with gr.Column(scale=1):
             url_input = gr.Textbox(label="Reference File URL", lines=1)
+            scrape_button = gr.Button("Scrape Site")
+            scrape_button.click(fn=vectorize_scrape, inputs=url_input, outputs=url_input)
             # file_input = gr.File(elem_classes=["file-interface"], file_types=["pdf", "csv", "text", "html"], file_count="multiple")
             file_input = gr.File(elem_classes=["file-interface"], file_types=["file"], file_count="multiple")
             vectorize_button = gr.Button("Vectorize Files")
-            vectorize_button.click(fn=vectorize, inputs=file_input, outputs=file_input)
+            vectorize_button.click(fn=vectorize_uploads, inputs=file_input, outputs=file_input)
             use_rag = gr.Checkbox(label="Use Knowledge Base")
             use_rag.select(fn=toggle_knowledge_base, inputs=use_rag)
             
 
 demo.launch(server_name="0.0.0.0", ssl_verify=False)
-
-
-
-# what difference does dell technologies make in on-premise inferencing?
 
 
