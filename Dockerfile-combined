@@ -1,0 +1,29 @@
+FROM python:3.12.7-bullseye
+
+# install and build ollama
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
+# install demo app dependencies
+RUN pip install llama-index-embeddings-ollama llama-index-llms-ollama llama-index-readers-web llama-index-vector-stores-chroma llama-index gradio
+RUN pip install pysqlite3-binary
+
+# copy app artifacts
+COPY demo/ /demo/
+
+# copy ollama model artifacts
+COPY ./models/gguf-models/ /root/models/
+COPY ./models/build-ollama.sh /root/models/
+
+RUN chmod +x /root/models/build-ollama.sh
+RUN /root/models/build-ollama.sh
+
+EXPOSE 11434
+EXPOSE 7860-7870
+
+ENV LLM_MODEL_NAME='llm-model'
+ENV LLM_MODEL_ENDPOINT='http://localhost:11434'
+ENV EMBED_MODEL_NAME='embedding-model'
+ENV EMBED_MODEL_ENDPOINT='http://localhost:11434'
+
+ENTRYPOINT [ "/bin/bash" ]
+CMD ["-c", "ollama serve & sleep 5 && ollama run llm-model & cd /demo/ && python rag-demo-melius.py"]
